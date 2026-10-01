@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
+<title>Pemantau Pemotongan DNSSEC .id</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: satu kolom laporan operasional; empat panel mengikuti alur masalah -> bukti -> penyebab -> keputusan */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #18212c;
+  --muted: #5a6575;
+  --line: #dbe1e8;
+  --track: #e9edf2;
+  --rsa: #d9561f;        /* RSASHA512 (zona bermasalah) */
+  --rsa-soft: #fbe6dc;
+  --ecdsa: #2a6fd0;      /* ECDSAP256SHA256 */
+  --ecdsa-soft: #dfeafb;
+  --rsa256: #17936a;     /* RSASHA256 */
+  --tcp: #6b7686;
+  --rest: #b8c1cc;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161d26; --ink: #e5eaf0; --muted: #98a4b3; --line: #29333f; --track: #222b36;
+    --rsa: #f0763f; --rsa-soft: #3a2419; --ecdsa: #5c9cf2; --ecdsa-soft: #1a2a40; --rsa256: #3cc590;
+    --tcp: #9aa6b5; --rest: #4a5563; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d26; --ink: #e5eaf0; --muted: #98a4b3; --line: #29333f; --track: #222b36;
+  --rsa: #f0763f; --rsa-soft: #3a2419; --ecdsa: #5c9cf2; --ecdsa-soft: #1a2a40; --rsa256: #3cc590;
+  --tcp: #9aa6b5; --rest: #4a5563; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-sans); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 40px; display: grid; gap: 22px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+p { margin: 0; }
+.num, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+header { display: grid; gap: 10px; padding-bottom: 6px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); letter-spacing: .02em; }
+.meta span + span::before { content: "·"; margin-right: 14px; color: var(--line); }
+header h1 { font-size: clamp(26px, 4vw, 36px); font-weight: 700; letter-spacing: -.01em; }
+header h1 .zone { font-family: var(--font-mono); font-weight: 600; color: var(--rsa); }
+.lede { max-width: 68ch; color: var(--muted); font-size: 16px; }
+.lede b { color: var(--ink); font-weight: 600; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 22px; display: grid; gap: 16px; min-width: 0; }
+.phead { display: grid; gap: 6px; }
+.step { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.phead h2 { font-size: 20px; font-weight: 600; }
+.phead p { color: var(--muted); max-width: 72ch; }
+
+/* KPI */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--line); }
+.kpi { padding: 16px 18px 4px 0; display: grid; gap: 4px; align-content: start; min-width: 0; }
+.kpi + .kpi { padding-left: 18px; border-left: 1px solid var(--line); }
+.kpi .v { font-family: var(--font-mono); font-size: 30px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.kpi .v.hot { color: var(--rsa); }
+.kpi .v small { font-size: 16px; font-weight: 500; color: var(--muted); }
+.kpi .l { font-size: 13.5px; color: var(--ink); }
+.kpi .s { font-size: 12.5px; color: var(--muted); }
+
+/* chips */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 13px var(--font-mono); padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.chip:hover { border-color: var(--muted); }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.chip:focus-visible, .btn:focus-visible, input:focus-visible + .box { outline: 2px solid var(--ecdsa); outline-offset: 2px; }
+
+/* line chart */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 7px; }
+.chartbox { position: relative; min-width: 0; }
+.chartbox svg { display: block; width: 100%; }
+.chartbox text { fill: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 6px 18px rgba(0,0,0,.12); min-width: 170px; }
+.tip b { font-family: var(--font-mono); }
+.tip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tip .row span:last-child { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.note { font-size: 12.5px; color: var(--muted); max-width: 80ch; }
+
+/* anatomy */
+.anat { display: grid; gap: 14px; }
+.arow { display: grid; grid-template-columns: 190px minmax(0, 1fr) 118px; gap: 14px; align-items: center; }
+.alab { display: grid; gap: 1px; min-width: 0; }
+.alab b { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
+.alab span { font-size: 12px; color: var(--muted); }
+.track { position: relative; height: 40px; }
+.bar { position: absolute; inset: 0 auto 0 0; display: flex; gap: 2px; transition: width .35s ease; }
+.seg { height: 100%; border-radius: 3px; display: grid; place-items: center; font: 500 11px var(--font-mono); color: #fff; overflow: hidden; white-space: nowrap; transition: width .35s ease; }
+.seg.rest { background: var(--rest); color: var(--ink); }
+.limit { position: absolute; top: -8px; bottom: -8px; width: 0; border-left: 2px dashed var(--ink); }
+.scale { position: relative; height: 18px; margin-left: 204px; margin-right: 132px; }
+.scale span { position: absolute; transform: translateX(-50%); font: 11px var(--font-mono); color: var(--muted); }
+.scale span.lim { color: var(--ink); font-weight: 600; }
+.verdict { font: 600 12.5px var(--font-mono); padding: 5px 8px; border-radius: 6px; text-align: center; }
+.verdict.bad { background: var(--rsa-soft); color: var(--rsa); }
+.verdict.ok { background: var(--ecdsa-soft); color: var(--ecdsa); }
+.size { font: 500 12px var(--font-mono); color: var(--muted); position: absolute; top: 50%; transform: translateY(-50%); margin-left: 6px; padding: 1px 4px; background: var(--surface); white-space: nowrap; z-index: 1; }
+.sigs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.sig { border-top: 3px solid var(--rsa); padding-top: 10px; display: grid; gap: 4px; font-size: 13.5px; min-width: 0; }
+.sig b { font-weight: 600; }
+.sig span { color: var(--muted); font-size: 13px; }
+.sig.off { border-top-color: var(--line); opacity: .5; }
+
+/* simulator */
+.sim { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 26px; align-items: start; }
+.steps { display: grid; gap: 8px; }
+.zrow { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.zrow:hover { border-color: var(--muted); }
+.zrow input { position: absolute; opacity: 0; pointer-events: none; }
+.box { width: 20px; height: 20px; border-radius: 5px; border: 2px solid var(--rsa); display: grid; place-items: center; }
+.zrow input:checked + .box { background: var(--ecdsa); border-color: var(--ecdsa); }
+.zrow input:checked + .box::after { content: ""; width: 9px; height: 5px; border: 2px solid #fff; border-top: 0; border-right: 0; transform: translateY(-1px) rotate(-45deg); }
+.zname { display: grid; min-width: 0; }
+.zname b { font-family: var(--font-mono); font-size: 14px; }
+.zname span { font-size: 12px; color: var(--muted); }
+.zshare { font: 500 12.5px var(--font-mono); color: var(--muted); text-align: right; }
+.zalg { font: 600 10.5px var(--font-mono); letter-spacing: .04em; padding: 2px 6px; border-radius: 4px; background: var(--rsa-soft); color: var(--rsa); justify-self: start; margin-top: 3px; }
+.zrow.on .zalg { background: var(--ecdsa-soft); color: var(--ecdsa); }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 500 13px var(--font-sans); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.btn:hover { border-color: var(--muted); }
+.res { display: grid; gap: 18px; }
+.metric { display: grid; gap: 6px; }
+.mhead { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.mhead b { font-size: 14px; font-weight: 600; }
+.delta { font: 600 13px var(--font-mono); color: var(--ecdsa); }
+.delta.zero { color: var(--muted); }
+.pair { display: grid; grid-template-columns: 92px minmax(0, 1fr) 88px; gap: 10px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.pair .t { height: 14px; background: var(--track); border-radius: 3px; position: relative; overflow: hidden; }
+.pair .f { position: absolute; inset: 0 auto 0 0; border-radius: 3px; transition: width .35s ease; }
+.pair .f.now { background: var(--rsa); }
+.pair .f.aft { background: var(--ecdsa); }
+.pair .n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); text-align: right; }
+.assume { font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--line); padding-left: 12px; }
+
+footer { font-size: 12.5px; color: var(--muted); display: grid; gap: 6px; max-width: 90ch; padding-top: 4px; }
+footer b { color: var(--ink); font-weight: 600; }
+
+@media (max-width: 820px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi:nth-child(3) { padding-left: 0; border-left: 0; }
+  .kpi:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .sim { grid-template-columns: 1fr; }
+  .arow { grid-template-columns: 1fr; gap: 6px; }
+  .scale { margin-left: 0; margin-right: 0; }
+  .verdict { justify-self: start; }
+  .sigs { grid-template-columns: 1fr; }
+}
+@media (max-width: 460px) {
+  .wrap { padding-inline: 16px; }
+  .panel { padding: 16px; }
+  .kpi .v { font-size: 24px; }
+  .pair { grid-template-columns: 70px minmax(0, 1fr) 76px; }
+}
+@media (prefers-reduced-motion: reduce) { .bar, .seg, .pair .f { transition: none; } }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <div class="meta"><span>Server otoritatif .id</span><span>19 Agustus 2026, 14.49–15.19 WIB</span><span>11.712.623 pesan DNS</span><span>Tim We DID · PeDaS 2026</span></div>
+    <h1>NXDOMAIN Problem Solver <span class="zone">.id</span></h1>
+    <p class="lede">Jawaban “nama tidak ada” (NXDOMAIN) yang membawa DNSSEC dari lima zona berkunci <b>RSASHA512</b> terlalu besar untuk UDP, sehingga terpotong dan resolver harus bertanya ulang lewat TCP. Halaman ini menunjukkan besarnya masalah, penyebabnya, dan perkiraan dampak bila PANDI mengganti algoritma kelima zona menjadi <b>ECDSAP256SHA256</b>.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="h1s">
+    <div class="phead">
+      <div class="step">1 · Masalah</div>
+      <h2 id="h1s">Dalam 30 menit, 321 ribu jawaban terpotong</h2>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="v hot num">321.798</div><div class="l">respons UDP terpotong</div><div class="s">5,7% dari seluruh respons UDP</div></div>
+      <div class="kpi"><div class="v hot num">99,7<small>%</small></div><div class="l">berasal dari 5 zona dengan algoritma RSASHA512</div><div class="s">co.id, web.id, sch.id, biz.id, desa.id</div></div>
+      <div class="kpi"><div class="v num">83,4<small>%</small></div><div class="l">kueri TCP dipicu pemotongan</div><div class="s">217.286 dari 260.570 kueri TCP</div></div>
+      <div class="kpi"><div class="v num">4,4 → 12,1<small>%</small></div><div class="l">porsi TCP: kueri → byte respons</div><div class="s">sedikit kueri, tetapi membawa jawaban besar</div></div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h2s">
+    <div class="phead">
+      <div class="step">2 · Bukti sepanjang waktu</div>
+      <h2 id="h2s">Kueri TCP naik dan turun mengikuti pemotongan</h2>
+      <p>Pilih zona untuk melihat kontribusinya. Arahkan kursor untuk melihat angka per menit.</p>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="Pilih zona"></div>
+    <div class="legend"><span><i style="background:var(--rsa)"></i>respons UDP terpotong</span><span><i style="background:var(--tcp)"></i>kueri TCP</span></div>
+    <div class="chartbox" id="lineBox"><svg id="line" role="img" aria-label="Grafik respons terpotong dan kueri TCP per menit"></svg><div class="tip" id="tip" hidden></div></div>
+    <p class="note">Menampilkan data pada 19 Agustus 2026, 14.50-15.18 WIB. Lonjakan pukul 15.01–15.03 berasal dari co.id dan menjadi contoh kejadian yang perlu memicu peringatan dini.</p>
+  </section>
+
+  <section class="panel" aria-labelledby="h3s">
+    <div class="phead">
+      <div class="step">3 · Penyebab</div>
+      <h2 id="h3s">Tanda tangan RSA-4096 saja sudah melebihi batas UDP - "Pemotongan Pasti"</h2>
+      <p>Jawaban “tidak ada” (NXDOMAIN) wajib membawa bukti yang ikut ditandatangani. Ukuran satu tanda tangan ditentukan algoritma zona: 512 byte untuk RSASHA512 (kunci 4.096-bit), 256 byte untuk RSASHA256, dan 64 byte untuk ECDSAP256SHA256.</p>
+    </div>
+    <div class="chips" id="typeChips" role="group" aria-label="Pilih jenis jawaban">
+      <button class="chip" type="button" id="tNX" aria-pressed="true">NXDOMAIN · nama tidak ada</button>
+      <button class="chip" type="button" id="tND" aria-pressed="false">NODATA · jenis data tidak ada</button>
+    </div>
+    <div class="anat" id="anat"></div>
+    <div class="scale" id="scale"></div>
+    <div class="legend"><span><i style="background:var(--rest)"></i>isi jawaban lainnya</span><span><i style="background:var(--rsa)"></i>tanda tangan RSASHA512</span><span><i style="background:var(--rsa256)"></i>tanda tangan RSASHA256</span><span><i style="background:var(--ecdsa)"></i>tanda tangan ECDSA</span><span><i style="background:var(--ink);height:0;border-top:2px dashed var(--ink)"></i>batas UDP server 1.232 byte</span></div>
+    <div class="sigs" id="sigs">
+      <div class="sig"><b>Tanda tangan 1 · identitas zona</b><span>Record SOA: siapa pengelola zona dan berapa lama jawaban “tidak ada” boleh diingat.</span></div>
+      <div class="sig"><b>Tanda tangan 2 · bukti ketiadaan</b><span>Record NSEC: potongan daftar nama berurutan yang menunjukkan nama atau jenis data itu tidak ada.</span></div>
+      <div class="sig" id="sig3"><b>Tanda tangan 3 · tidak ada nama joker</b><span>Bukti tidak ada wildcard (*.co.id) yang bisa menjawab nama tersebut. Hanya pada NXDOMAIN.</span></div>
+    </div>
+    <p class="note">Panjang batang = median ukuran jawaban utuh (yang dikirim lewat TCP atau UDP tanpa terpotong)</p>
+    <p class="note">Laju pemotongan = porsi jawaban UDP jenis itu yang terpotong.</p>
+  </section>
+
+  <section class="panel" aria-labelledby="h4s">
+    <div class="phead">
+      <div class="step">4 · Keputusan</div>
+      <h2 id="h4s">Simulasi penggantian algoritma ke ECDSAP256SHA256</h2>
+      <p>Pilih zona yang sudah diganti. Urutan mengikuti usulan tahapan, dimulai dari zona terkecil sebagai uji coba.</p>
+    </div>
+    <div class="sim">
+      <div class="steps">
+        <div id="zlist" class="steps"></div>
+        <div class="btns"><button class="btn" type="button" id="all">Pilih semua</button><button class="btn" type="button" id="none">Kosongkan</button></div>
+      </div>
+      <div class="res" id="res" aria-live="polite"></div>
+    </div>
+    <p class="assume"><b>Hasil yang diharapkan:</b> setelah diganti, laju pemotongan jawaban negatif DNSSEC zona tersebut turun ke 0,18%, sama dengan zona ECDSA yang sudah berjalan di server yang sama. Kueri TCP dan byte TCP yang dipicu pemotongan berkurang sebanding dengan turunnya pemotongan.</p>
+    <p class="assume"><b>Asumsi:</b> kelima zona tersebut memiliki karakteristik dan perilaku serupa dengan zona yang sudah menggunakan algoritma kunci ECDSAP256SHA256.</p>
+  </section>
+
+  <footer>
+    <p><b>Data:</b> sampel 30 menit pesan DNS (kueri dan respons) pada server otoritatif .id yang dibagikan panitia PeDaS 2026. Representasi oleh satu baris adalah satu pesan DNS, bukan satu pengguna. Halaman ini hanya memuat angka ringkasan.</p>
+    <p><b>Jawaban Negatif =</b>NXDOMAIN atau NODATA.</p>
+    <p><b>Kueri TCP dipicu pemotongan = </b>kueri TCP dari resolver yang sama untuk nama dan jenis yang sama, paling lama 10 detik setelah respons UDP terpotong.</p>
+    <p><b> Algoritma zona dibaca dari record DNSKEY dalam data.</b></p>
+  </footer>
+</div>
+
+<script>
+const D = {"menit":["14.50","14.51","14.52","14.53","14.54","14.55","14.56","14.57","14.58","14.59","15.00","15.01","15.02","15.03","15.04","15.05","15.06","15.07","15.08","15.09","15.10","15.11","15.12","15.13","15.14","15.15","15.16","15.17","15.18"],"seri":{"co.id":{"terpotong":[5015,4988,4805,4368,7533,10505,4776,7289,8581,4865,6354,15990,24002,14868,9249,6179,5989,5899,5870,5285,5440,4671,4542,4690,4716,5075,4986,4978,4926],"tcp":[4279,4174,4078,3834,7411,10681,4113,6945,8619,3967,6032,4306,7709,11840,9310,5608,5498,5561,5204,4059,4948,3843,3976,4110,4105,4492,4400,4316,4245],"dipicu":[3695,3667,3542,3314,6827,10129,3551,6049,8119,3413,5204,3686,7161,11243,8769,5075,4895,4729,4646,3575,4396,3299,3480,3596,3589,3874,3888,3778,3571]},"web.id":{"terpotong":[1707,910,1133,1184,1033,1240,1146,934,980,839,2294,1356,1946,2013,1521,1313,1793,1479,1564,1769,2270,2563,1564,1555,2302,1685,2190,1499,1452],"tcp":[870,817,792,779,808,837,827,851,802,800,1821,1061,1215,1142,1007,1188,1207,1114,1228,1120,1281,1329,1070,1254,1710,1286,1333,1163,946],"dipicu":[649,615,576,554,574,619,588,586,625,587,1513,816,928,891,743,893,966,852,976,857,916,953,783,948,1385,880,997,854,678]},"sch.id":{"terpotong":[1634,1448,1344,1202,1128,973,1012,1081,926,1031,1207,1254,1118,876,1034,1118,971,997,1201,1138,955,937,871,1006,1099,1063,1043,1038,895],"tcp":[1143,1285,1095,986,916,839,931,903,897,903,1163,1154,1012,819,860,894,886,886,1041,902,875,842,752,878,1067,1010,988,985,851],"dipicu":[1027,1160,981,846,805,717,809,724,785,743,690,832,880,696,740,755,782,765,896,775,757,722,634,774,906,875,889,861,701]},"biz.id":{"terpotong":[884,854,901,815,812,867,889,795,675,825,1055,984,983,932,890,858,840,790,768,991,991,1100,763,773,690,997,752,745,876],"tcp":[752,696,704,671,682,704,661,724,643,699,851,718,763,789,773,655,642,653,675,816,836,718,681,681,612,794,722,719,757],"dipicu":[573,521,568,486,505,514,473,485,478,527,639,541,585,598,617,507,482,464,525,647,634,540,511,516,455,632,521,523,526]},"desa.id":{"terpotong":[98,81,70,72,203,291,158,66,85,96,79,116,125,161,100,107,76,90,157,167,80,103,148,121,178,109,135,105,136],"tcp":[73,71,67,75,134,230,142,70,83,95,73,84,91,103,85,87,75,71,90,129,87,96,138,103,106,89,97,85,97],"dipicu":[66,64,60,67,124,182,133,57,78,91,63,76,83,95,77,78,69,68,85,117,73,89,125,94,97,81,95,78,91]},"lainnya":{"terpotong":[33,18,39,30,32,17,22,28,34,29,44,28,33,32,34,53,35,32,29,21,32,28,52,42,37,23,36,43,34],"tcp":[291,278,352,283,243,239,259,273,260,237,256,376,560,416,248,297,239,215,257,215,282,240,242,236,255,167,185,269,298],"dipicu":[28,15,28,28,29,15,18,26,32,26,32,28,31,26,25,36,28,28,28,19,28,22,49,29,33,22,25,35,22]}},"zona":{"co.id":{"neg_do_udp":223989,"neg_do_tc":206912,"tc_all":212051,"tcp_bytes":240062843,"resp_bytes":1240925436,"kueri":1715521,"tcp":166516,"dipicu":148851},"web.id":{"neg_do_udp":45880,"neg_do_tc":45622,"tc_all":46658,"tcp_bytes":50321983,"resp_bytes":163761578,"kueri":236725,"tcp":32767,"dipicu":24671},"sch.id":{"neg_do_udp":32213,"neg_do_tc":32119,"tc_all":32601,"tcp_bytes":43540713,"resp_bytes":109199443,"kueri":142070,"tcp":28607,"dipicu":24201},"biz.id":{"neg_do_udp":25333,"neg_do_tc":25166,"tc_all":25888,"tcp_bytes":32667985,"resp_bytes":95877409,"kueri":145701,"tcp":21512,"dipicu":16117},"desa.id":{"neg_do_udp":3370,"neg_do_tc":3370,"tc_all":3614,"tcp_bytes":3823996,"resp_bytes":14841644,"kueri":22079,"tcp":2903,"dipicu":2624},"lainnya":{"neg_do_udp":434453,"neg_do_tc":745,"tc_all":986,"tcp_bytes":1464869,"resp_bytes":1446727717,"kueri":3599605,"tcp":8265,"dipicu":822}}};
+const fmt = (v, d = 0) => new Intl.NumberFormat('id-ID', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const R5 = ['co.id', 'web.id', 'sch.id', 'biz.id', 'desa.id'];
+const ALLZ = [...R5, 'lainnya'];
+
+/* ---------- 2. grafik per menit ---------- */
+let zSel = 'semua';
+const chips = document.getElementById('chips');
+[['semua', 'Semua zona'], ...R5.map(z => [z, z]), ['lainnya', 'zona lain']].forEach(([k, l]) => {
+  const b = document.createElement('button');
+  b.className = 'chip'; b.type = 'button'; b.textContent = l; b.dataset.k = k;
+  b.setAttribute('aria-pressed', k === zSel);
+  b.onclick = () => { zSel = k; chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.k === k)); drawLine(); };
+  chips.appendChild(b);
+});
+function series(k) {
+  const zs = zSel === 'semua' ? ALLZ : [zSel];
+  return D.menit.map((_, i) => zs.reduce((s, z) => s + D.seri[z][k][i], 0));
+}
+function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * p >= v) return m * p; return 10 * p; }
+const svg = document.getElementById('line'), box = document.getElementById('lineBox'), tip = document.getElementById('tip');
+let geo = null;
+function drawLine() {
+  const W = box.clientWidth, H = Math.max(220, Math.min(300, W * 0.38));
+  const m = { l: 52, r: 14, t: 14, b: 28 };
+  const a = series('terpotong'), t = series('tcp');
+  const ymax = niceMax(Math.max(...a, ...t) * 1.05);
+  const n = D.menit.length;
+  const x = i => m.l + i * (W - m.l - m.r) / (n - 1);
+  const y = v => m.t + (1 - v / ymax) * (H - m.t - m.b);
+  geo = { x, y, W, H, m, a, t, n };
+  let g = '';
+  for (let k = 0; k <= 4; k++) {
+    const v = ymax * k / 4, yy = y(v);
+    g += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" stroke="${css('--line')}" stroke-width="1"/>`;
+    g += `<text x="${m.l - 8}" y="${yy + 4}" text-anchor="end">${v >= 1000 ? fmt(v / 1000, v % 1000 ? 1 : 0) + ' rb' : fmt(v)}</text>`;
+  }
+  const step = W < 520 ? 7 : 4;
+  D.menit.forEach((lab, i) => { if ((i % step === 0 && n - 1 - i >= step / 2) || i === n - 1) g += `<text x="${x(i)}" y="${H - 8}" text-anchor="${i === n - 1 ? 'end' : i === 0 ? 'start' : 'middle'}">${lab}</text>`; });
+  const path = arr => arr.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  const area = `${path(a)}L${x(n - 1)},${y(0)}L${x(0)},${y(0)}Z`;
+  g += `<path d="${area}" fill="${css('--rsa')}" fill-opacity="0.12"/>`;
+  g += `<path d="${path(t)}" fill="none" stroke="${css('--tcp')}" stroke-width="2" stroke-dasharray="5 3"/>`;
+  g += `<path d="${path(a)}" fill="none" stroke="${css('--rsa')}" stroke-width="2.4"/>`;
+  const im = a.indexOf(Math.max(...a));
+  g += `<circle cx="${x(im)}" cy="${y(a[im])}" r="4.5" fill="${css('--rsa')}" stroke="${css('--surface')}" stroke-width="2"/>`;
+  const anchor = x(im) > W - 150 ? 'end' : 'start', dx = anchor === 'end' ? -10 : 10;
+  g += `<text x="${x(im) + dx}" y="${y(a[im]) + 4}" text-anchor="${anchor}" style="fill:${css('--ink')};font-weight:600">puncak ${D.menit[im]} · ${fmt(a[im])}</text>`;
+  g += `<line id="hair" x1="0" x2="0" y1="${m.t}" y2="${H - m.b}" stroke="${css('--ink')}" stroke-width="1" opacity="0"/>`;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('height', H);
+  svg.innerHTML = g;
+  tip.hidden = true;
+}
+function onMove(ev) {
+  if (!geo) return;
+  const r = svg.getBoundingClientRect();
+  const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+  const { x, m, W, n, a, t } = geo;
+  let i = Math.round((px - m.l) / ((W - m.l - m.r) / (n - 1)));
+  i = Math.max(0, Math.min(n - 1, i));
+  const hair = svg.querySelector('#hair');
+  hair.setAttribute('x1', x(i)); hair.setAttribute('x2', x(i)); hair.setAttribute('opacity', .35);
+  const zs = zSel === 'semua' ? ALLZ : [zSel];
+  const dip = zs.reduce((s, z) => s + D.seri[z].dipicu[i], 0);
+  tip.innerHTML = `<b>${D.menit[i]} WIB</b>
+    <div class="row"><span>terpotong</span><span>${fmt(a[i])}</span></div>
+    <div class="row"><span>kueri TCP</span><span>${fmt(t[i])}</span></div>
+    <div class="row"><span>· dipicu pemotongan</span><span>${fmt(dip)}</span></div>`;
+  tip.hidden = false;
+  const tw = tip.offsetWidth;
+  let left = x(i) + 12; if (left + tw > W) left = x(i) - tw - 12;
+  tip.style.left = Math.max(0, left) + 'px'; tip.style.top = '8px';
+}
+svg.addEventListener('pointermove', onMove);
+svg.addEventListener('touchstart', onMove, { passive: true });
+svg.addEventListener('pointerleave', () => { tip.hidden = true; const h = svg.querySelector('#hair'); if (h) h.setAttribute('opacity', 0); });
+
+/* ---------- 3. anatomi jawaban ---------- */
+const ANAT = {
+  NX: [
+    { alg: 'RSASHA512', key: 'kunci RSA 4.096-bit', zones: 'co · web · sch · biz · desa', size: 1871, sig: 512, n: 3, col: '--rsa', rate: 100.00 },
+    { alg: 'RSASHA256', key: 'kunci RSA 2.048-bit', zones: '.id · ac · or', size: 1082, sig: 256, n: 3, col: '--rsa256', rate: 0.15 },
+    { alg: 'ECDSAP256SHA256', key: 'kunci ECDSA P-256', zones: 'go · my · net · mil · ponpes', size: 524, sig: 64, n: 3, col: '--ecdsa', rate: 0.39 },
+  ],
+  ND: [
+    { alg: 'RSASHA512', key: 'kunci RSA 4.096-bit', zones: 'co · web · sch · biz · desa', size: 1240, sig: 512, n: 2, col: '--rsa', rate: 88.30 },
+    { alg: 'RSASHA256', key: 'kunci RSA 2.048-bit', zones: '.id · ac · or', size: 716, sig: 256, n: 2, col: '--rsa256', rate: 0.18 },
+    { alg: 'ECDSAP256SHA256', key: 'kunci ECDSA P-256', zones: 'go · my · net · mil · ponpes', size: 343, sig: 64, n: 2, col: '--ecdsa', rate: 0.00 },
+  ],
+};
+const SMAX = 2200, LIMIT = 1232;
+const pct = v => (100 * v / SMAX) + '%';
+let tSel = 'NX';
+function drawAnat() {
+  const rows = ANAT[tSel];
+  const tw = (document.querySelector('.track') || document.getElementById('anat')).clientWidth || 600;
+  document.getElementById('anat').innerHTML = rows.map(r => {
+    const rest = r.size - r.sig * r.n;
+    const px = v => tw * v / SMAX;
+    let segs = `<div class="seg rest" style="width:${pct(rest)}">${px(rest) > 70 ? 'isi ' + fmt(rest) + ' B' : ''}</div>`;
+    for (let k = 0; k < r.n; k++) {
+      const w = px(r.sig), lab = w > 92 ? 'TT' + (k + 1) + ' · ' + r.sig + ' B' : w > 44 ? r.sig + ' B' : '';
+      segs += `<div class="seg" style="width:calc(${pct(r.sig)} - 2px);background:var(${r.col})" title="Tanda tangan ${k + 1}: ${r.sig} byte">${lab}</div>`;
+    }
+    const bad = r.rate >= 50;
+    return `<div class="arow">
+      <div class="alab"><b>${r.alg}</b><span>${r.key} · ${r.zones}</span></div>
+      <div class="track"><div class="bar" style="width:${pct(r.size)}">${segs}</div>
+        <div class="size" style="left:${pct(r.size)}">${fmt(r.size)} B</div>
+        <div class="limit" style="left:${pct(LIMIT)}"></div></div>
+      <div class="verdict ${bad ? 'bad' : 'ok'}">${fmt(r.rate, r.rate >= 10 ? 1 : 2)}% terpotong</div>
+    </div>`;
+  }).join('');
+  document.getElementById('scale').innerHTML = [0, 500, 1000, 1500, 2000].filter(v => Math.abs(v - LIMIT) > 150).map(v => `<span style="left:${pct(v)}">${fmt(v)}</span>`).join('')
+    + `<span class="lim" style="left:${pct(LIMIT)}">1.232</span>`;
+  document.getElementById('sig3').classList.toggle('off', tSel !== 'NX');
+}
+function setType(k) {
+  tSel = k;
+  document.getElementById('tNX').setAttribute('aria-pressed', k === 'NX');
+  document.getElementById('tND').setAttribute('aria-pressed', k === 'ND');
+  drawAnat();
+}
+document.getElementById('tNX').onclick = () => setType('NX');
+document.getElementById('tND').onclick = () => setType('ND');
+
+/* ---------- 4. simulator ---------- */
+const ORDER = ['desa.id', 'biz.id', 'sch.id', 'web.id', 'co.id'];
+const ECDSA_RATE = 278 / 153603;
+const TOT = ALLZ.reduce((s, z) => { for (const k in D.zona[z]) s[k] = (s[k] || 0) + D.zona[z][k]; return s; }, {});
+const sel = new Set(ORDER);
+const zlist = document.getElementById('zlist');
+ORDER.forEach((z, i) => {
+  const zd = D.zona[z];
+  const lab = document.createElement('label');
+  lab.className = 'zrow';
+  lab.innerHTML = `<input type="checkbox" id="cb-${z.replace('.', '-')}" ${sel.has(z) ? 'checked' : ''}><span class="box" aria-hidden="true"></span>
+    <span class="zname"><b>Tahap ${i + 1} · ${z}</b><span>${fmt(zd.tc_all)} terpotong (${fmt(100 * zd.tc_all / TOT.tc_all, 1)}%)</span><span class="zalg"></span></span>
+    <span class="zshare"></span>`;
+  const cb = lab.querySelector('input');
+  cb.onchange = () => { cb.checked ? sel.add(z) : sel.delete(z); simulate(); };
+  zlist.appendChild(lab);
+});
+document.getElementById('all').onclick = () => { ORDER.forEach(z => sel.add(z)); syncBoxes(); simulate(); };
+document.getElementById('none').onclick = () => { sel.clear(); syncBoxes(); simulate(); };
+function syncBoxes() { zlist.querySelectorAll('input').forEach((cb, i) => cb.checked = sel.has(ORDER[i])); }
+function simulate() {
+  let tc = 0, dip = 0, tcp = 0, tbytes = 0;
+  ALLZ.forEach(z => {
+    const d = D.zona[z];
+    let ntc = d.tc_all;
+    if (sel.has(z)) ntc = d.tc_all - d.neg_do_tc + d.neg_do_udp * ECDSA_RATE;
+    const r = d.tc_all ? ntc / d.tc_all : 1;
+    tc += ntc;
+    dip += d.dipicu * r;
+    tcp += d.tcp - d.dipicu * (1 - r);
+    tbytes += d.tcp_bytes - d.tcp_bytes * (d.dipicu / d.tcp) * (1 - r);
+  });
+  zlist.querySelectorAll('.zrow').forEach((row, i) => {
+    const on = sel.has(ORDER[i]);
+    row.classList.toggle('on', on);
+    row.querySelector('.zalg').textContent = on ? 'ECDSAP256SHA256' : 'RSASHA512';
+  });
+  const M = [
+    { t: 'Respons UDP terpotong (30 menit)', now: TOT.tc_all, aft: tc, f: v => fmt(Math.round(v)) },
+    { t: 'Kueri TCP dipicu pemotongan', now: TOT.dipicu, aft: dip, f: v => fmt(Math.round(v)) },
+    { t: 'Porsi kueri lewat TCP', now: 100 * TOT.tcp / TOT.kueri, aft: 100 * tcp / TOT.kueri, f: v => fmt(v, 2) + '%' },
+    { t: 'Porsi byte respons lewat TCP', now: 100 * TOT.tcp_bytes / TOT.resp_bytes, aft: 100 * tbytes / TOT.resp_bytes, f: v => fmt(v, 1) + '%' },
+  ];
+  document.getElementById('res').innerHTML = M.map(o => {
+    const ch = o.now ? 100 * (o.aft - o.now) / o.now : 0;
+    const zero = Math.abs(ch) < 0.05;
+    return `<div class="metric">
+      <div class="mhead"><b>${o.t}</b><span class="delta ${zero ? 'zero' : ''}">${zero ? 'tidak berubah' : fmt(ch, 1) + '%'}</span></div>
+      <div class="pair"><span>sekarang</span><div class="t"><div class="f now" style="width:100%"></div></div><span class="n">${o.f(o.now)}</span></div>
+      <div class="pair"><span>perkiraan</span><div class="t"><div class="f aft" style="width:${Math.max(0.4, 100 * o.aft / o.now)}%"></div></div><span class="n">${o.f(o.aft)}</span></div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- init ---------- */
+function drawAll() { drawLine(); drawAnat(); }
+drawAll(); simulate();
+new ResizeObserver(() => drawLine()).observe(box);
+new ResizeObserver(() => drawAnat()).observe(document.getElementById('anat'));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawLine);
+new MutationObserver(drawLine).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+</script>
+
+</body>
+</html>
